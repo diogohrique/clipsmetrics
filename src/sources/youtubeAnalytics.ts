@@ -1,12 +1,14 @@
 import type { DailyPoint } from "../core/monetization.js";
 import type { Video } from "../core/types.js";
-import { getAccessToken } from "./googleAuth.js";
 
 const DATA = "https://www.googleapis.com/youtube/v3";
 const ANALYTICS = "https://youtubeanalytics.googleapis.com/v2/reports";
 
-async function get<T>(url: string): Promise<T> {
-  const token = await getAccessToken();
+/** Função que devolve um access token válido do Google (local: arquivo; remoto: props do OAuth). */
+export type TokenProvider = () => Promise<string>;
+
+async function get<T>(getToken: TokenProvider, url: string): Promise<T> {
+  const token = await getToken();
   const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
   const body = (await res.json()) as T & { error?: { message: string } };
   if (!res.ok) throw new Error(`YouTube API ${res.status}: ${body.error?.message ?? "erro"}`);
@@ -18,9 +20,9 @@ interface ReportTable {
   rows?: (string | number)[][];
 }
 
-async function report(params: Record<string, string>): Promise<Record<string, string | number>[]> {
+async function report(getToken: TokenProvider, params: Record<string, string>): Promise<Record<string, string | number>[]> {
   const q = new URLSearchParams({ ids: "channel==MINE", ...params });
-  const t = await get<ReportTable>(`${ANALYTICS}?${q}`);
+  const t = await get<ReportTable>(getToken, `${ANALYTICS}?${q}`);
   const names = t.columnHeaders.map((c) => c.name);
   return (t.rows ?? []).map((r) => Object.fromEntries(r.map((v, i) => [names[i], v])));
 }
@@ -44,8 +46,8 @@ export interface ChannelInfo {
   videoCount: number;
 }
 
-export async function getChannel(): Promise<ChannelInfo> {
-  const r = await get<{ items: { id: string; snippet: { title: string }; statistics: Record<string, string> }[] }>(
+export async function getChannel(getToken: TokenProvider): Promise<ChannelInfo> {
+  const r = await get<{ items: { id: string; snippet: { title: string }; statistics: Record<string, string> }[] }>(getToken, 
     `${DATA}/channels?part=snippet,statistics&mine=true`,
   );
   const c = r.items?.[0];
@@ -63,8 +65,8 @@ export async function getChannel(): Promise<ChannelInfo> {
  * Views diárias de Shorts. `engagedViews` é a contagem antiga (anterior a 31/03/2025),
  * que é a usada para o requisito de 10M de views do YPP.
  */
-export async function getShortsDaily(startDate: string, endDate: string): Promise<{ views: DailyPoint[]; engaged: DailyPoint[] }> {
-  const rows = await report({
+export async function getShortsDaily(getToken: TokenProvider, startDate: string, endDate: string): Promise<{ views: DailyPoint[]; engaged: DailyPoint[] }> {
+  const rows = await report(getToken, {
     startDate,
     endDate,
     metrics: "views,engagedViews",
@@ -78,8 +80,8 @@ export async function getShortsDaily(startDate: string, endDate: string): Promis
   };
 }
 
-export async function getLongWatchHours(startDate: string, endDate: string): Promise<number> {
-  const rows = await report({
+export async function getLongWatchHours(getToken: TokenProvider, startDate: string, endDate: string): Promise<number> {
+  const rows = await report(getToken, {
     startDate,
     endDate,
     metrics: "estimatedMinutesWatched",
@@ -101,8 +103,8 @@ interface VideoResource {
  * views engajadas e % assistido da Analytics API quando já consolidados (vídeos de 1–2 dias
  * ainda não aparecem no relatório da Analytics).
  */
-export async function getAllVideos(analyticsStart: string, analyticsEnd: string): Promise<Video[]> {
-  const ch = await get<{ items: { contentDetails: { relatedPlaylists: { uploads: string } } }[] }>(
+export async function getAllVideos(getToken: TokenProvider, analyticsStart: string, analyticsEnd: string): Promise<Video[]> {
+  const ch = await get<{ items: { contentDetails: { relatedPlaylists: { uploads: string } } }[] }>(getToken, 
     `${DATA}/channels?part=contentDetails&mine=true`,
   );
   const uploads = ch.items?.[0]?.contentDetails.relatedPlaylists.uploads;
@@ -111,7 +113,7 @@ export async function getAllVideos(analyticsStart: string, analyticsEnd: string)
   const ids: string[] = [];
   let pageToken = "";
   do {
-    const r = await get<{ items: { contentDetails: { videoId: string } }[]; nextPageToken?: string }>(
+    const r = await get<{ items: { contentDetails: { videoId: string } }[]; nextPageToken?: string }>(getToken, 
       `${DATA}/playlistItems?part=contentDetails&maxResults=50&playlistId=${uploads}${pageToken ? `&pageToken=${pageToken}` : ""}`,
     );
     ids.push(...r.items.map((i) => i.contentDetails.videoId));
@@ -120,7 +122,7 @@ export async function getAllVideos(analyticsStart: string, analyticsEnd: string)
 
   const videos: Video[] = [];
   for (let i = 0; i < ids.length; i += 50) {
-    const r = await get<{ items: VideoResource[] }>(
+    const r = await get<{ items: VideoResource[] }>(getToken, 
       `${DATA}/videos?part=snippet,contentDetails,statistics&id=${ids.slice(i, i + 50).join(",")}`,
     );
     for (const v of r.items ?? []) {
@@ -137,7 +139,7 @@ export async function getAllVideos(analyticsStart: string, analyticsEnd: string)
   }
 
   // Analytics: até 200 vídeos por consulta; pega os mais vistos do período.
-  const stats = await getVideoStats(analyticsStart, analyticsEnd, 200, false);
+  const stats = await getVideoStats(getToken, analyticsStart, analyticsEnd, 200, false);
   const byId = new Map(stats.map((s) => [s.id, s]));
   for (const v of videos) {
     const s = byId.get(v.id);
@@ -150,8 +152,8 @@ export async function getAllVideos(analyticsStart: string, analyticsEnd: string)
 }
 
 /** Vídeos com métricas do período (até 200, o máximo da API por consulta) e títulos/duração. */
-export async function getVideoStats(startDate: string, endDate: string, maxResults = 200, withMeta = true): Promise<Video[]> {
-  const rows = await report({
+export async function getVideoStats(getToken: TokenProvider, startDate: string, endDate: string, maxResults = 200, withMeta = true): Promise<Video[]> {
+  const rows = await report(getToken, {
     startDate,
     endDate,
     metrics: "views,engagedViews,averageViewPercentage,averageViewDuration,subscribersGained",
@@ -163,7 +165,7 @@ export async function getVideoStats(startDate: string, endDate: string, maxResul
   const meta = new Map<string, { title: string; publishedAt: string; durationSec: number }>();
   for (let i = 0; withMeta && i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50);
-    const r = await get<{ items: { id: string; snippet: { title: string; publishedAt: string }; contentDetails: { duration: string } }[] }>(
+    const r = await get<{ items: { id: string; snippet: { title: string; publishedAt: string }; contentDetails: { duration: string } }[] }>(getToken, 
       `${DATA}/videos?part=snippet,contentDetails&id=${chunk.join(",")}`,
     );
     for (const v of r.items ?? []) {

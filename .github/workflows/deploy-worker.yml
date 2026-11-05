@@ -1,0 +1,62 @@
+name: Deploy do clipmetrics (Cloudflare)
+
+on:
+  push:
+    branches: [main]
+    paths: ["src/**", "worker/**", ".github/workflows/deploy-worker.yml"]
+  workflow_dispatch:
+
+concurrency: deploy-worker
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Conferir segredos
+        run: |
+          for s in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!s}" ]; then echo "::error::Falta o segredo $s em Settings > Secrets and variables > Actions"; exit 1; fi
+          done
+
+      - name: Instalar dependências
+        run: |
+          npm ci
+          npm ci --prefix worker
+
+      - name: Testes
+        run: npm test
+
+      - name: Criar (se preciso) o KV do OAuth e preencher o id
+        working-directory: worker
+        run: |
+          ID=$(npx wrangler kv namespace list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const n=JSON.parse(s).find(x=>x.title==="clipmetrics-oauth");process.stdout.write(n?n.id:"")})')
+          if [ -z "$ID" ]; then
+            npx wrangler kv namespace create clipmetrics-oauth
+            ID=$(npx wrangler kv namespace list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{process.stdout.write(JSON.parse(s).find(x=>x.title==="clipmetrics-oauth").id)})')
+          fi
+          sed -i "s/__OAUTH_KV_ID__/$ID/" wrangler.jsonc
+
+      - name: Deploy
+        working-directory: worker
+        run: npx wrangler deploy
+
+      - name: Atualizar segredos do Worker
+        working-directory: worker
+        env:
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.GOOGLE_WEB_CLIENT_SECRET }}
+          ALLOWED_EMAILS: ${{ secrets.ALLOWED_EMAILS }}
+        run: |
+          put() { if [ -n "$2" ]; then printf '%s' "$2" | npx wrangler secret put "$1"; else echo "::warning::Segredo $1 vazio, não atualizado"; fi; }
+          put GOOGLE_CLIENT_ID "$GOOGLE_WEB_CLIENT_ID"
+          put GOOGLE_CLIENT_SECRET "$GOOGLE_WEB_CLIENT_SECRET"
+          put ALLOWED_EMAILS "$ALLOWED_EMAILS"

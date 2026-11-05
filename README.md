@@ -9,7 +9,7 @@ O que diferencia este app das ferramentas genéricas (Metricool, mLabs, Reportei
 - **Várias contas**: pensado para quem opera vários canais, com preço por portfólio. Ainda não implementado.
 - **Atribuição à origem**: qual vídeo-fonte rendeu os melhores cortes. O campo `sourceId` já existe nos dados, mas a integração ainda não foi feita.
 
-## Estado atual (v0.2, MVP de uso próprio)
+## Estado atual (v0.3, MVP de uso próprio)
 
 | Peça | Status |
 |---|---|
@@ -17,7 +17,7 @@ O que diferencia este app das ferramentas genéricas (Metricool, mLabs, Reportei
 | Fonte provisória do YouTube: página pública de Shorts via `yt-dlp` (views arredondadas, sem retenção) | pronta |
 | Servidor MCP local (stdio) com 6 ferramentas | pronto |
 | Fonte oficial do YouTube: Data API (views exatas em tempo real) + Analytics API (views engajadas por dia, % assistido) via OAuth | pronta |
-| Servidor MCP remoto (Streamable HTTP + OAuth 2.1) para usar no claude.ai | depois |
+| Servidor MCP remoto no Cloudflare Workers (Streamable HTTP + OAuth 2.1, login Google, lista de e-mails permitidos) | pronto, falta publicar |
 | TikTok e Instagram (exigem aprovação de app; o Instagram exige CNPJ) | só após validar a demanda |
 
 ## Uso
@@ -64,3 +64,25 @@ Os valores ficam em `src/core/monetization.ts` e podem ser alterados, porque as 
 
 - A política do YouTube restringe "métricas derivadas" (projeções, razões de retenção) para apps de terceiros até que passem por auditoria (Derived Metrics Policy, jun/2026). Enquanto o app for só de uso próprio, isso não pesa. Antes de abrir para outros usuários, é preciso pedir a auditoria.
 - Os dados de analytics do YouTube só podem ser mostrados a quem autorizou o acesso. A autorização deve ser reconfirmada a cada 30 dias, e os dados apagados em até 7 dias depois da revogação.
+
+## Servidor remoto (claude.ai)
+
+O código fica em `worker/`. É um Cloudflare Worker que:
+
+- implementa o OAuth 2.1 exigido pelo claude.ai (registro dinâmico de cliente e PKCE), com `@cloudflare/workers-oauth-provider`;
+- faz o login no Google e guarda o refresh token do Google criptografado no KV;
+- só aceita contas em `ALLOWED_EMAILS` e redirecionamentos para `claude.ai`, `claude.com` e `localhost`;
+- usa as mesmas ferramentas do servidor local (`src/tools.ts`), sem a leitura pública via yt-dlp.
+
+### Configuração (uma vez)
+
+1. **Cloudflare**: crie uma conta grátis e anote o **Account ID**, que aparece na página inicial do painel. Crie um **API Token** com o modelo "Edit Cloudflare Workers" e acrescente a permissão *Account → Workers KV Storage → Edit*.
+2. **Google Cloud**: em Clientes, crie um cliente OAuth do tipo **Aplicativo da Web**. Em URI de redirecionamento autorizado, coloque `https://clipmetrics.<seu-subdominio>.workers.dev/callback`. O subdomínio aparece em Workers & Pages → Account details.
+3. **GitHub** (Settings → Secrets and variables → Actions → New repository secret):
+   - `CLOUDFLARE_API_TOKEN` e `CLOUDFLARE_ACCOUNT_ID`
+   - `GOOGLE_WEB_CLIENT_ID` e `GOOGLE_WEB_CLIENT_SECRET` (do cliente Web do passo 2)
+   - `ALLOWED_EMAILS`: os e-mails que podem usar, separados por vírgula
+4. Rode o workflow **Deploy do clipmetrics (Cloudflare)** em Actions → Run workflow. Ele também roda sozinho a cada push em `src/` ou `worker/`.
+5. **claude.ai** → Configurações → Conectores → Adicionar conector personalizado, com a URL `https://clipmetrics.<seu-subdominio>.workers.dev/mcp`.
+
+Com o app do Google em modo "Teste", a autorização vence a cada 7 dias. Quando vencer, desconecte e conecte o conector de novo no claude.ai.

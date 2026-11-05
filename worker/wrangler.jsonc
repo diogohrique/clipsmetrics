@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "clipmetrics",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "kv_namespaces": [
+    // Criado pelo workflow de deploy (ver ../.github/workflows/deploy-worker.yml); o id é preenchido lá.
+    { "binding": "OAUTH_KV", "id": "__OAUTH_KV_ID__" }
+  ],
+  "observability": { "enabled": true }
+}
