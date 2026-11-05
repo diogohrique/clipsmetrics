@@ -30,6 +30,12 @@ export interface PartStats {
   /** views da parte / views da parte anterior publicada. */
   vsPrevious: number | null;
   durationSec?: number;
+  engagedViews?: number;
+  /** % médio assistido da parte (quando a fonte é a API oficial). */
+  avgViewPercentage?: number;
+  publishedAt?: string;
+  /** Publicada há menos de `minAgeHours`: fica fora de média, melhor parte e maior queda. */
+  recent?: boolean;
 }
 
 export interface SeriesReport {
@@ -53,7 +59,13 @@ function round(n: number, d = 3): number {
 }
 
 /** Agrupa vídeos por série (caso + rede) e calcula a retenção de público entre partes. */
-export function buildSeriesReports(videos: Video[]): SeriesReport[] {
+export function buildSeriesReports(
+  videos: Video[],
+  opts: { now?: number; minAgeHours?: number } = {},
+): SeriesReport[] {
+  const now = opts.now ?? Date.now();
+  const minAgeMs = (opts.minAgeHours ?? 24) * 3_600_000;
+  const isRecent = (v: Video) => (v.publishedAt ? now - Date.parse(v.publishedAt) < minAgeMs : false);
   const groups = new Map<string, { ref: SeriesPartRef; video: Video }[]>();
   for (const video of videos) {
     const ref = parseSeriesTitle(video.title);
@@ -86,6 +98,10 @@ export function buildSeriesReports(videos: Video[]): SeriesReport[] {
         vsFirst: first ? round(it.video.views / first) : null,
         vsPrevious: prev ? round(it.video.views / prev) : null,
         durationSec: it.video.durationSec,
+        engagedViews: it.video.engagedViews,
+        avgViewPercentage: it.video.avgViewPercentage,
+        publishedAt: it.video.publishedAt,
+        recent: isRecent(it.video) || undefined,
       };
     });
 
@@ -93,14 +109,17 @@ export function buildSeriesReports(videos: Video[]): SeriesReport[] {
     const missingParts: number[] = [];
     for (let p = 1; p <= maxPart; p++) if (!byPart.has(p)) missingParts.push(p);
 
+    const mature = parts.filter((p) => !p.recent);
     let biggestDrop: SeriesReport["biggestDrop"] = null;
-    for (const p of parts) {
+    for (const p of mature) {
       if (p.vsPrevious !== null && (biggestDrop === null || p.vsPrevious < biggestDrop.vsPrevious)) {
         biggestDrop = { part: p.part, vsPrevious: p.vsPrevious };
       }
     }
-    const bestPart = parts.reduce((a, b) => (b.views > a.views ? b : a));
+    const base = mature.length ? mature : parts;
+    const bestPart = base.reduce((a, b) => (b.views > a.views ? b : a));
     const totalViews = parts.reduce((s, p) => s + p.views, 0);
+    const baseViews = base.reduce((s, p) => s + p.views, 0);
 
     reports.push({
       caseName: sorted[0].ref.caseName,
@@ -108,7 +127,7 @@ export function buildSeriesReports(videos: Video[]): SeriesReport[] {
       platform: sorted[0].video.platform,
       parts,
       totalViews,
-      avgViews: Math.round(totalViews / parts.length),
+      avgViews: Math.round(baseViews / base.length),
       missingParts,
       biggestDrop,
       best: { part: bestPart.part, views: bestPart.views },

@@ -62,3 +62,24 @@ test("duração mínima do TikTok", () => {
   ]);
   assert.deepEqual(r.map((x) => x.qualifies), [false, true, null]);
 });
+
+test("duração ISO 8601 do YouTube", async () => {
+  const { parseIsoDuration } = await import("../src/sources/youtubeAnalytics.ts");
+  assert.equal(parseIsoDuration("PT59S"), 59);
+  assert.equal(parseIsoDuration("PT1M5S"), 65);
+  assert.equal(parseIsoDuration("PT1H2M3S"), 3723);
+});
+
+test("partes recentes ficam fora da maior queda e da média", () => {
+  const now = Date.parse("2026-11-05T16:00:00Z");
+  const mk = (id: string, part: number, views: number, publishedAt: string): Video => ({
+    id, platform: "youtube", title: `x | Caso Teste Parte ${part} #shorts`, views, publishedAt,
+  });
+  const [r] = buildSeriesReports(
+    [mk("a", 1, 1000, "2026-11-04T09:00:00Z"), mk("b", 2, 900, "2026-11-04T12:00:00Z"), mk("c", 3, 0, "2026-11-05T15:00:00Z")],
+    { now },
+  );
+  assert.equal(r.parts[2].recent, true);
+  assert.deepEqual(r.biggestDrop, { part: 2, vsPrevious: 0.9 });
+  assert.equal(r.avgViews, 950);
+});

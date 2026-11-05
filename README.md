@@ -9,14 +9,14 @@ O que diferencia este app das ferramentas genéricas (Metricool, mLabs, Reportei
 - **Várias contas**: pensado para quem opera vários canais, com preço por portfólio. Ainda não implementado.
 - **Atribuição à origem**: qual vídeo-fonte rendeu os melhores cortes. O campo `sourceId` já existe nos dados, mas a integração ainda não foi feita.
 
-## Estado atual (v0.1, MVP de uso próprio)
+## Estado atual (v0.2, MVP de uso próprio)
 
 | Peça | Status |
 |---|---|
 | Núcleo: séries, retenção entre partes, YPP, duração no TikTok | pronto e com testes |
 | Fonte provisória do YouTube: página pública de Shorts via `yt-dlp` (views arredondadas, sem retenção) | pronta |
-| Servidor MCP local (stdio) com 4 ferramentas | pronto |
-| Fonte oficial: YouTube Analytics API (OAuth, views engajadas por dia, retenção) | próxima etapa |
+| Servidor MCP local (stdio) com 6 ferramentas | pronto |
+| Fonte oficial do YouTube: Data API (views exatas em tempo real) + Analytics API (views engajadas por dia, % assistido) via OAuth | pronta |
 | Servidor MCP remoto (Streamable HTTP + OAuth 2.1) para usar no claude.ai | depois |
 | TikTok e Instagram (exigem aprovação de app; o Instagram exige CNPJ) | só após validar a demanda |
 
@@ -36,7 +36,22 @@ Servidor MCP local, por exemplo no Claude Code:
 claude mcp add clipmetrics -e CLIPMETRICS_YT_CHANNEL=UCy81o2ZJv_AinMAcfxTG5uA -- npx tsx /caminho/para/clipmetrics/src/mcp.ts
 ```
 
-Ferramentas: `listar_series`, `relatorio_serie`, `progresso_monetizacao_youtube`, `checar_duracao_tiktok`.
+Ferramentas: `resumo_canal`, `top_videos`, `listar_series`, `relatorio_serie`, `progresso_monetizacao_youtube`, `checar_duracao_tiktok`.
+
+### Autorizar o YouTube (API oficial)
+
+1. No Google Cloud, crie um cliente OAuth do tipo **App para computador**. Ative a YouTube Data API v3 e a YouTube Analytics API, com os escopos `youtube.readonly` e `yt-analytics.readonly`.
+2. Coloque o JSON baixado em `~/.config/clipmetrics/client_secret.json`, ou defina `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET`. **Nunca faça commit desse arquivo.**
+3. Rode `npm run auth`, abra o link e autorize. O navegador vai para `http://localhost/?...`, uma página que não carrega. Copie o endereço e rode `npm run auth -- "<endereço>"`.
+4. O token fica em `~/.config/clipmetrics/token.json`. Com o app em modo "Teste" no Google, a autorização vence a cada 7 dias: basta repetir o passo 3.
+
+Sem autorização, as ferramentas de séries usam a página pública do canal via `yt-dlp` (views arredondadas).
+
+Observações sobre os dados:
+- A Analytics API consolida com 1 a 2 dias de atraso. Por isso a lista de vídeos vem da Data API, que é em tempo real, e a retenção entra quando estiver disponível.
+- Partes publicadas há menos de 24 h ficam marcadas como `recent` e não entram na média, na melhor parte nem na maior queda.
+- `engagedViews` é a contagem antiga de views de Shorts, a que vale para os 10M do YPP.
+- Um % assistido acima de 100 significa replays (Shorts em loop).
 
 ## Regras de monetização usadas (conferidas em nov/2026)
 
