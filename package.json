@@ -9,7 +9,8 @@
     "build": "tsc",
     "test": "node --import tsx --test test/*.test.ts",
     "mcp": "tsx src/mcp.ts",
-    "relatorio": "tsx src/cli.ts"
+    "relatorio": "tsx src/cli.ts",
+    "auth": "tsx src/auth.ts"
   },
   "license": "ISC",
   "dependencies": {
